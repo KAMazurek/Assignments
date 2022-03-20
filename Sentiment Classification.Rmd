@@ -1,0 +1,176 @@
+---
+title: "Assignment_7_sec.app"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(text2vec)
+library(e1071)
+library(tidyverse)
+library(tidytext)
+```
+
+Step 1:
+```{r}
+rev <- text2vec::movie_review
+```
+
+
+Tokenization and counting how many times a word occurs in each review:
+```{r}
+rev_tokens <- rev %>% 
+  unnest_tokens(word, review) %>% 
+  count(id, word)
+```
+
+
+Adding number of words in each review as a column of rev_tokens:
+```{r}
+total_words <- rev_tokens %>% 
+  group_by(id) %>% 
+  summarise(total = sum(n))
+
+rev_tokens <- left_join(rev_tokens, total_words)
+```
+
+Finding words that occur in corpus less than x times. I do that only for the reason of making the computational effort lower. When I wanted to proceed with the complete data set, svm function was taking just too much time to run.
+```{r}
+words_to_remove <- rev_tokens %>%
+  group_by(word) %>%
+  summarise(in_corpus = sum(n)) %>%
+  arrange(in_corpus) %>% 
+  filter(in_corpus < 200) %>%
+  pull(word)
+
+```
+
+Removing rarely occuring words
+```{r}
+rev_tokens <- rev_tokens %>% 
+  filter(!(word %in% words_to_remove))
+
+```
+
+
+
+```{r}
+head(rev_tokens, 5)
+```
+
+
+
+```{r}
+rev_tfidf <- rev_tokens %>% 
+  bind_tf_idf(word, id, n) %>%
+  arrange(desc(tf_idf))
+
+```
+
+```{r}
+head(rev_tfidf, 5)
+```
+
+
+Converting the above table into a table with one row for each review :
+```{r}
+rev_tfidf_wide <- rev_tfidf %>% 
+  select(id, word, tf_idf) %>% 
+  pivot_wider(names_from = word, values_from = tf_idf,  names_repair = "unique",
+  values_fill = 0)
+
+
+```
+
+
+```{r}
+colnames(rev_tfidf_wide)[1] <- "id"
+
+```
+
+
+```{r}
+head(rev_tfidf_wide, 5)
+```
+
+
+
+Splitting data into training and test set and adding labels to training set:
+```{r}
+
+####!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+set.seed(50)
+test_id <- sample(rev_tfidf_wide$id, (nrow(rev_tfidf_wide)*0.2), replace = FALSE)
+test <- subset(rev_tfidf_wide, rev_tfidf_wide$id %in% test_id)
+train <- subset(rev_tfidf_wide, !(rev_tfidf_wide$id %in% test_id))
+```
+
+```{r}
+tr_sent <- rev %>% 
+  select(id, sentiment)
+
+train_labelled <- train %>%
+  left_join(tr_sent, by = "id") 
+```
+
+```{r}
+test_labelled <- test %>%
+  left_join(tr_sent, by = "id") 
+```
+
+
+
+```{r}
+head(train_labelled, 5)
+```
+
+
+SVM training:
+```{r}
+set.seed(50)
+
+train_labelled[["sentiment"]] = factor(train_labelled[["sentiment"]])
+test_labelled[["sentiment"]] = factor(test_labelled[["sentiment"]])
+
+svmfit = svm(sentiment ~ ., data = train_labelled[,-1], kernel = "linear")
+
+```
+
+```{r}
+print(svmfit)
+```
+
+
+Making prediction with the above model on the test set:
+```{r}
+test_pred <- predict(svmfit, newdata = test[ ,-1])
+```
+
+Vectorization of predictions:
+```{r}
+pred_vector <- as.numeric(levels(test_pred))[as.integer(test_pred)]
+```
+
+Confusion Matrix, AUC and other:
+
+```{r}
+library(caret)
+confusionMatrix(test_pred, test_labelled$sentiment)
+
+```
+
+
+ROC curve for test set:
+```{r}
+library(pROC)
+
+par(pty = "s")
+
+roc(test_labelled$sentiment, pred_vector, plot = TRUE, legacy.axes = TRUE, percent = TRUE, xlab = "False Positive Perc.", ylab = "True Positive Perc.", col = "deepskyblue3", lwd = 4, print.auc = TRUE, auc.polygon = TRUE, auc.polygon.col = "azure2")
+
+legend("topleft", legend = "SVM on training set")
+```
+
