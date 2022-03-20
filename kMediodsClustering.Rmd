@@ -1,0 +1,180 @@
+---
+title: "Assignment6_complete.Rmd"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Assignment 6 - Data Wrangling and Analysis. 
+The algrithm performs k-mediods clustering.
+Logics behind the code is based on the book "Elements of Statistical Learning". 
+
+#Step 1: Loading the data set:
+```{r}
+library(tidyverse)
+clus_df <- read_csv("https://raw.githubusercontent.com/vankesteren/dav_practicals/master/12_Unsupervised_learning_Clustering/data/clusterdata.csv")
+```
+# Step 2: A function for Euclidean distance
+
+
+
+```{r}
+l2_dist <- function(x, y) {sqrt(sum((x - y)^2))}
+```
+
+
+# Step 3: K-Medioids clustering algorithm
+
+Functions which will be used later:
+
+```{r}
+#function which computes distance between each pair of observations and outputs a matrix 
+distances_between_obs <- function(df_input) {
+  distances <- list() # make a vector instead of a list
+  vector_names <- df_input$id_num
+  
+  
+  for (o1 in 1:nrow(df_input)) {
+    for (o2 in 1:nrow(df_input)) { #replace with sapply
+      distances <- as.vector(unlist(append(distances, l2_dist(df_input[o1, -1], df_input[o2, -1]))))
+    }
+  }
+  
+  distances <- matrix(distances, nrow = nrow(df_input), byrow = TRUE)
+  dimnames(distances) = list(vector_names, vector_names)
+  
+  distances
+}
+```
+
+```{r}
+#function which finds medoid in the matrix (like the one obtained fromdistances_between_obs) and it's output is a list of medoid's ids.
+finding_medoid_id <- function(distances_df) {
+  distances_df <- distances_df %>% 
+    as.data.frame(.)
+  
+  colnames(distances_df[rowSums(distances_df) == min(rowSums(distances_df)) ])
+}
+
+```
+
+```{r}
+#Function creates a vector of medoids ids using functions distances_between_obs and finding_medoid_id
+
+creating_medoid_vector <- function(df_initial) {
+ 
+   medoids_vector <- df_initial %>% 
+    group_by(assigned_clust) %>% 
+    group_map(~ distances_between_obs(.)) %>% 
+    lapply(., finding_medoid_id) %>%
+    unlist() %>%
+    as.numeric()
+  
+  medoids_vector
+}
+
+```
+
+```{r}
+#The function computes distances between each medoid and each obserwation and appends to a vector name of row of a medoid applicable to the minimal out of 3 distances.  
+
+assigning_to_clus <- function(df_initial, medoids_vector) {
+  
+  clus_list <- list()
+  dist_for_obs <- list()
+  
+  df_initial <- df_initial %>%
+    select(-last_col())
+  
+  for (obs in 1:nrow(df_initial)) {
+    for (m in medoids_vector) {
+      dist_for_obs <- as.vector(unlist(append(dist_for_obs, 
+                                              l2_dist(df_initial[df_initial$id_num == obs, -1], df_initial[df_initial$id_num == m, -1]))))
+      
+    }
+  }
+  
+  #splitting vector of distances into groups applicable to particular observations
+  list_for_obs <- split(dist_for_obs, rep(1:ceiling(length(dist_for_obs)/length(medoids_vector)), each = length(medoids_vector))[1:length(dist_for_obs)])
+  
+  #assigning position of the minimal value(new cluster assignment)
+  clus_list <- as.vector(unlist(append(clus_list, lapply(list_for_obs, function(x) {which(x == min(x))} ))))
+  clus_list
+}
+
+```
+
+
+```{r}
+#This is the main function of the alghoritm. It's input is a data frame and a number of clusters. It's output is a list with 2 elements: vector of clusters assigned to the observations and a vector of medoids ids.
+
+kmedioids <- function(df, k_num) {
+
+  
+  #Assign randomly each observation to a cluster. Add a column with ids, because some data sets can lack it, like in the agssignment 6 example. Situate it as the first column. Thanks to this code we'll always have id column in the first position and column with cluster assignment in the last one.  
+  df_new <- df %>% 
+  mutate(assigned_clust = sample(k_num, nrow(.), replace = TRUE)) %>% 
+  mutate(id_num = 1:nrow(.)) %>% 
+  relocate(id_num)
+  
+  #Creating a vector with cluster assignments which will be useful later, when the comparison of current and previous assignments    will be needed in order of continue or interrupt the main loop.
+   assignment_clust_initial <- df_new$assigned_clust
+   
+   
+   repeat {
+   
+   #Stage 1 from the book
+   medoids_vector <- creating_medoid_vector(df_new)
+ 
+   
+   #Stage 2 from the book
+   #The vector which is an output of assigning_to_clus function is now added as a column to df (I overwrite assigned_clust with a new one).
+   df_new$assigned_clust <- assigning_to_clus(df_new, medoids_vector)
+   
+   #Stage 3 from the book
+   # Comparison of 'new' and 'old' vectors with cluster assignments> If identical, break the loop, but if not, overwrite 'old' medoid vector with new one and iterate again.
+   if (identical(assignment_clust_initial, df_new$assigned_clust)) {
+     break
+   } else {
+     assignment_clust_initial <- df_new$assigned_clust
+   }
+   
+   
+   }
+   
+
+  output <- c(list(df_new$assigned_clust), list(medoids_vector))
+  
+}
+```
+
+
+
+#Presentaion on the provided example
+```{r}
+kmedioids_clus_df <- kmedioids(df = clus_df, k_num = 3)
+
+```
+
+
+
+```{r}
+kmedioids_clus_df
+```
+
+```{r}
+clus_df$cluster <- kmedioids_clus_df[[1]]
+clus_df
+```
+
+#Visualization
+```{r}
+
+clus_df %>% 
+  mutate_at(., vars(cluster), as.character) %>% 
+  ggplot(., aes(x = x1, y = x2)) +
+  geom_point(aes(color = cluster))
+```
+
